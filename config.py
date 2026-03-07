@@ -1,4 +1,5 @@
 from pydantic_settings import BaseSettings
+from supabase import create_client, Client
 
 class Settings(BaseSettings):
     # Database
@@ -7,6 +8,10 @@ class Settings(BaseSettings):
     supabase_db: str = "postgres"
     supabase_user: str = "postgres"
     supabase_password: str
+    
+    # Supabase API
+    supabase_url: str
+    supabase_key: str
     
     # OpenAI
     openai_api_key: str
@@ -27,6 +32,8 @@ class Settings(BaseSettings):
         extra = 'ignore'  # Railway 추가 변수 무시
 
 settings = Settings()
+
+supabase: Client = create_client(settings.supabase_url, settings.supabase_key)
 
 MEM0_CONFIG = {
     "vector_store": {
