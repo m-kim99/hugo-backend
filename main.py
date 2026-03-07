@@ -22,8 +22,8 @@ openai_client = OpenAI(api_key=settings.openai_api_key)
 class ChatRequest(BaseModel):
     message: str
     user_id: str = settings.default_user_id
-    model: str = settings.mem0_llm_model
-    temperature: float = settings.mem0_llm_temperature
+    model: str = "gpt-4o-mini"
+    temperature: float = 0.8
     system_prompt: str | None = None
 
 class ChatResponse(BaseModel):

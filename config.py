@@ -21,14 +21,6 @@ class Settings(BaseSettings):
     system_prompt_template: str
     available_models: str
     
-    # Mem0 LLM
-    mem0_llm_model: str = "gpt-4o-mini"
-    mem0_llm_temperature: float = 0.7
-    mem0_llm_max_tokens: int = 2000
-    
-    # Mem0 Embedder
-    mem0_embedder_model: str = "text-embedding-3-small"
-    
     class Config:
         env_file = ".env"
 
@@ -48,15 +40,15 @@ MEM0_CONFIG = {
     "llm": {
         "provider": "openai",
         "config": {
-            "model": settings.mem0_llm_model,
-            "temperature": settings.mem0_llm_temperature,
-            "max_tokens": settings.mem0_llm_max_tokens
+            "model": "gpt-4o-mini",
+            "temperature": 0.7,
+            "max_tokens": 2000
         }
     },
     "embedder": {
         "provider": "openai",
         "config": {
-            "model": settings.mem0_embedder_model
+            "model": "text-embedding-3-small"
         }
     }
 }
