@@ -2,10 +2,11 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from openai import OpenAI
-from typing import List, Dict
+from typing import List, Dict, Optional
 
 from config import settings
 from memory_service import memory
+from session_service import SessionService
 
 app = FastAPI(title=settings.api_title)
 
@@ -22,6 +23,7 @@ openai_client = OpenAI(api_key=settings.openai_api_key)
 class ChatRequest(BaseModel):
     message: str
     user_id: str = settings.default_user_id
+    session_id: Optional[str] = None
     model: str = "gpt-4o-mini"
     temperature: float = 0.8
     system_prompt: str | None = None
@@ -29,6 +31,7 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     response: str
     memories: List[Dict]
+    session_id: str
 
 @app.get("/")
 async def root():
@@ -37,8 +40,22 @@ async def root():
 @app.post("/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest):
     try:
-        # 관련 메모리 검색
-        relevant_memories = memory.search(query=req.message, user_id=req.user_id, limit=5)
+        # 세션 처리
+        session_id = req.session_id
+        if not session_id:
+            # 새 세션 생성
+            session = SessionService.create_session(req.user_id, req.message)
+            session_id = session['id']
+        
+        # 사용자 메시지 저장
+        SessionService.add_message(session_id, 'user', req.message)
+        
+        # 관련 메모리 검색 (run_id로 세션 지정)
+        relevant_memories = memory.search(
+            query=req.message, 
+            user_id=req.user_id, 
+            limit=5
+        )
         memories_list = relevant_memories.get("results", [])
         memories_str = "\n".join(f"- {entry['memory']}" for entry in memories_list)
         
@@ -62,14 +79,67 @@ async def chat(req: ChatRequest):
         
         assistant_response = completion.choices[0].message.content
         
-        # 대화 메모리에 추가
-        messages.append({"role": "assistant", "content": assistant_response})
-        memory.add(messages, user_id=req.user_id)
+        # AI 응답 저장
+        SessionService.add_message(session_id, 'assistant', assistant_response)
         
-        return ChatResponse(response=assistant_response, memories=memories_list)
+        # 대화 메모리에 추가 (run_id로 세션 연결)
+        messages.append({"role": "assistant", "content": assistant_response})
+        memory.add(messages, user_id=req.user_id, run_id=session_id)
+        
+        return ChatResponse(
+            response=assistant_response, 
+            memories=memories_list,
+            session_id=session_id
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+# 세션 관련 엔드포인트
+@app.post("/sessions")
+async def create_session(user_id: str = settings.default_user_id, title: str = "새 대화"):
+    try:
+        session = SessionService.create_session(user_id, title)
+        return session
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/sessions")
+async def get_sessions(user_id: str = settings.default_user_id, limit: int = 50):
+    try:
+        sessions = SessionService.get_sessions(user_id, limit)
+        return {"sessions": sessions}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/sessions/{session_id}")
+async def get_session(session_id: str):
+    try:
+        session = SessionService.get_session(session_id)
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found")
+        return session
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/sessions/{session_id}/messages")
+async def get_session_messages(session_id: str):
+    try:
+        messages = SessionService.get_messages(session_id)
+        return {"messages": messages}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/sessions/{session_id}")
+async def delete_session(session_id: str):
+    try:
+        SessionService.delete_session(session_id)
+        return {"success": True}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# 기존 엔드포인트들
 @app.get("/memories")
 async def get_all_memories(user_id: str = settings.default_user_id):
     try:

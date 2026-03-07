@@ -51,13 +51,15 @@ MEM0_CONFIG = {
         "config": {
             "model": "gpt-4o-mini",
             "temperature": 0.7,
-            "max_tokens": 2000
+            "max_tokens": 2000,
+            "api_key": settings.openai_api_key
         }
     },
     "embedder": {
         "provider": "openai",
         "config": {
-            "model": "text-embedding-3-small"
+            "model": "text-embedding-3-small",
+            "api_key": settings.openai_api_key
         }
     }
 }
