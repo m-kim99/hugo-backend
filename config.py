@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     
     class Config:
         env_file = ".env"
+        env_file_encoding = 'utf-8'
+        extra = 'ignore'  # Railway 추가 변수 무시
 
 settings = Settings()
 
