@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     # Supabase API
     supabase_url: str
     supabase_key: str
+    supabase_service_key: str
     
     # OpenAI
     openai_api_key: str
@@ -33,7 +34,7 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
-supabase: Client = create_client(settings.supabase_url, settings.supabase_key)
+supabase: Client = create_client(settings.supabase_url, settings.supabase_service_key)
 
 MEM0_CONFIG = {
     "vector_store": {

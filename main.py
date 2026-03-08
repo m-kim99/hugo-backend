@@ -3,6 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from openai import OpenAI
 from typing import List, Dict, Optional
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from config import settings
 from memory_service import memory
@@ -19,6 +21,20 @@ app.add_middleware(
 )
 
 openai_client = OpenAI(api_key=settings.openai_api_key)
+
+KST = ZoneInfo("Asia/Seoul")
+WEEKDAYS_KO = ["월요일", "화요일", "수요일", "목요일", "금요일", "토요일", "일요일"]
+
+def build_session_metadata() -> str:
+    """[2] Session Metadata: 현재 KST 기준 날짜/시간/요일 생성."""
+    now = datetime.now(KST)
+    weekday = WEEKDAYS_KO[now.weekday()]
+    return (
+        f"[현재 세션 정보]\n"
+        f"- 날짜: {now.strftime('%Y년 %m월 %d일')} ({weekday})\n"
+        f"- 시각: {now.strftime('%H시 %M분')}\n"
+    )
+
 
 class ChatRequest(BaseModel):
     message: str
@@ -61,13 +77,17 @@ async def chat(req: ChatRequest):
         memories_list = relevant_memories.get("results", [])
         memories_str = "\n".join(f"- {entry['memory']}" for entry in memories_list)
 
-        # 시스템 프롬프트 구성
+        # [3] 메모리 + 시스템 프롬프트 구성
         if req.system_prompt:
-            system_prompt = req.system_prompt.replace("{memories}", memories_str)
+            base_prompt = req.system_prompt.replace("{memories}", memories_str)
         else:
-            system_prompt = settings.system_prompt_template.replace("{memories}", memories_str)
+            base_prompt = settings.system_prompt_template.replace("{memories}", memories_str)
 
-        # [5] OpenAI messages 조립: 시스템 + 히스토리 + 현재 메시지
+        # [2] Session Metadata를 system prompt 앞에 주입
+        session_metadata = build_session_metadata()
+        system_prompt = session_metadata + "\n" + base_prompt
+
+        # OpenAI messages 조립: 시스템 + [5]히스토리 + 현재 메시지
         messages = [{"role": "system", "content": system_prompt}]
         messages.extend(history)
         messages.append({"role": "user", "content": req.message})
