@@ -43,51 +43,58 @@ async def chat(req: ChatRequest):
         # 세션 처리
         session_id = req.session_id
         if not session_id:
-            # 새 세션 생성
             session = SessionService.create_session(req.user_id, req.message)
             session_id = session['id']
-        
-        # 사용자 메시지 저장
+
+        # [5] 히스토리 조회 — 반드시 add_message(user) 호출 전에 실행
+        history = SessionService.get_recent_messages(session_id)
+
+        # 사용자 메시지 DB 저장
         SessionService.add_message(session_id, 'user', req.message)
-        
-        # 관련 메모리 검색 (run_id로 세션 지정)
+
+        # 관련 메모리 검색
         relevant_memories = memory.search(
-            query=req.message, 
-            user_id=req.user_id, 
+            query=req.message,
+            user_id=req.user_id,
             limit=5
         )
         memories_list = relevant_memories.get("results", [])
         memories_str = "\n".join(f"- {entry['memory']}" for entry in memories_list)
-        
+
         # 시스템 프롬프트 구성
         if req.system_prompt:
             system_prompt = req.system_prompt.replace("{memories}", memories_str)
         else:
             system_prompt = settings.system_prompt_template.replace("{memories}", memories_str)
-        
-        # OpenAI API 호출
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": req.message}
-        ]
-        
+
+        # [5] OpenAI messages 조립: 시스템 + 히스토리 + 현재 메시지
+        messages = [{"role": "system", "content": system_prompt}]
+        messages.extend(history)
+        messages.append({"role": "user", "content": req.message})
+
         completion = openai_client.chat.completions.create(
             model=req.model,
             messages=messages,
             temperature=req.temperature
         )
-        
+
         assistant_response = completion.choices[0].message.content
-        
-        # AI 응답 저장
+
+        # AI 응답 DB 저장
         SessionService.add_message(session_id, 'assistant', assistant_response)
-        
-        # 대화 메모리에 추가 (run_id로 세션 연결)
-        messages.append({"role": "assistant", "content": assistant_response})
-        memory.add(messages, user_id=req.user_id, run_id=session_id)
-        
+
+        # 메모리에는 현재 교환만 추가 (히스토리 전체 넘기면 중복 팩트 추출됨)
+        memory.add(
+            [
+                {"role": "user", "content": req.message},
+                {"role": "assistant", "content": assistant_response}
+            ],
+            user_id=req.user_id,
+            run_id=session_id
+        )
+
         return ChatResponse(
-            response=assistant_response, 
+            response=assistant_response,
             memories=memories_list,
             session_id=session_id
         )

@@ -68,7 +68,7 @@ class SessionService:
     
     @staticmethod
     def get_messages(session_id: str) -> List[Dict]:
-        """세션의 메시지 목록 조회"""
+        """세션의 전체 메시지 목록 조회 (프론트 렌더링용)"""
         result = supabase.table('chat_messages')\
             .select('*')\
             .eq('session_id', session_id)\
@@ -76,3 +76,23 @@ class SessionService:
             .execute()
         
         return result.data
+
+    @staticmethod
+    def get_recent_messages(session_id: str, limit: int = 20) -> List[Dict]:
+        """OpenAI 컨텍스트 조립용 최근 메시지 조회.
+        
+        반드시 현재 유저 메시지를 add_message()로 저장하기 전에 호출해야
+        현재 메시지가 히스토리에 중복 포함되는 것을 방지할 수 있음.
+        
+        idx_messages_created_at 인덱스를 타도록 DESC + LIMIT 후 reverse.
+        리턴 형식: [{"role": "user"|"assistant", "content": "..."}]
+        """
+        result = supabase.table('chat_messages')\
+            .select('role, content')\
+            .eq('session_id', session_id)\
+            .order('created_at', desc=True)\
+            .limit(limit)\
+            .execute()
+        
+        # DESC로 가져온 것을 시간순(오래된 것부터)으로 뒤집기
+        return list(reversed(result.data))
