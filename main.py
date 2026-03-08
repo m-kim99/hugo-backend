@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 from config import settings
 from memory_service import memory
 from session_service import SessionService
+from explicit_memory_service import ExplicitMemoryService
 
 app = FastAPI(title=settings.api_title)
 
@@ -68,20 +69,32 @@ async def chat(req: ChatRequest):
         # 사용자 메시지 DB 저장
         SessionService.add_message(session_id, 'user', req.message)
 
-        # 관련 메모리 검색
+        # [4A] 명시적 메모리 조회 (항상 전체 포함)
+        explicit_memories = ExplicitMemoryService.get_all(req.user_id)
+        explicit_str = "\n".join(f"- {mem['content']}" for mem in explicit_memories)
+
+        # [4B] 동적 메모리 검색 (벡터 검색, 관련있는 것만)
         relevant_memories = memory.search(
             query=req.message,
             user_id=req.user_id,
             limit=5
         )
         memories_list = relevant_memories.get("results", [])
-        memories_str = "\n".join(f"- {entry['memory']}" for entry in memories_list)
+        dynamic_str = "\n".join(f"- {entry['memory']}" for entry in memories_list)
 
-        # [3] 메모리 + 시스템 프롬프트 구성
+        # [3] 통합 시스템 프롬프트 구성
         if req.system_prompt:
-            base_prompt = req.system_prompt.replace("{memories}", memories_str)
+            base_prompt = req.system_prompt
         else:
-            base_prompt = settings.system_prompt_template.replace("{memories}", memories_str)
+            base_prompt = settings.system_prompt_template
+
+        if explicit_str:
+            base_prompt = base_prompt.replace(
+                "{memories}",
+                f"[항상 기억하는 것들]\n{explicit_str}\n\n[대화 맥락 관련 기억]\n{dynamic_str}"
+            )
+        else:
+            base_prompt = base_prompt.replace("{memories}", dynamic_str)
 
         # [2] Session Metadata를 system prompt 앞에 주입
         session_metadata = build_session_metadata()
@@ -185,6 +198,59 @@ async def delete_memory(memory_id: str):
 @app.get("/models")
 async def get_models():
     return {"models": settings.available_models.split(",")}
+
+# 명시적 메모리 엔드포인트
+@app.get("/explicit-memories")
+async def get_explicit_memories(user_id: str = settings.default_user_id):
+    try:
+        memories = ExplicitMemoryService.get_all(user_id)
+        return {"memories": memories}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/explicit-memories")
+async def add_explicit_memory(
+    user_id: str = settings.default_user_id,
+    content: str = "",
+    category: str | None = None,
+    priority: int = 0
+):
+    try:
+        if not content.strip():
+            raise HTTPException(status_code=400, detail="content는 필수입니다")
+        mem_result = ExplicitMemoryService.add(user_id, content.strip(), category, priority)
+        return mem_result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/explicit-memories/{memory_id}")
+async def update_explicit_memory(
+    memory_id: str,
+    content: str | None = None,
+    category: str | None = None,
+    priority: int | None = None
+):
+    try:
+        mem_result = ExplicitMemoryService.update(memory_id, content, category, priority)
+        if not mem_result:
+            raise HTTPException(status_code=404, detail="메모리를 찾을 수 없습니다")
+        return mem_result
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/explicit-memories/{memory_id}")
+async def delete_explicit_memory(memory_id: str):
+    try:
+        ExplicitMemoryService.delete(memory_id)
+        return {"success": True}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn
