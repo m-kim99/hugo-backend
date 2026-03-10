@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from openai import OpenAI
@@ -36,6 +36,13 @@ def build_session_metadata() -> str:
         f"- 시각: {now.strftime('%H시 %M분')}\n"
     )
 
+def add_memory_background(messages: List[Dict], user_id: str, session_id: str):
+    """백그라운드에서 Mem0 팩트 추출 — 응답 속도에 영향 없음."""
+    try:
+        memory.add(messages, user_id=user_id, run_id=session_id)
+    except Exception as e:
+        print(f"[Memory] 백그라운드 저장 실패: {e}")
+
 
 class ChatRequest(BaseModel):
     message: str
@@ -55,7 +62,7 @@ async def root():
     return {"status": "running"}
 
 @app.post("/chat", response_model=ChatResponse)
-async def chat(req: ChatRequest):
+async def chat(req: ChatRequest, background_tasks: BackgroundTasks):
     try:
         # 세션 처리
         session_id = req.session_id
@@ -107,14 +114,15 @@ async def chat(req: ChatRequest):
         # AI 응답 DB 저장
         SessionService.add_message(session_id, 'assistant', assistant_response)
 
-        # 메모리에는 현재 교환만 추가 (히스토리 전체 넘기면 중복 팩트 추출됨)
-        memory.add(
+        # Mem0 팩트 추출 — 백그라운드에서 실행 (응답 속도에 영향 없음)
+        background_tasks.add_task(
+            add_memory_background,
             [
                 {"role": "user", "content": req.message},
                 {"role": "assistant", "content": assistant_response}
             ],
-            user_id=req.user_id,
-            run_id=session_id
+            req.user_id,
+            session_id
         )
 
         return ChatResponse(
