@@ -82,19 +82,10 @@ async def chat(req: ChatRequest):
         memories_list = relevant_memories.get("results", [])
         dynamic_str = "\n".join(f"- {entry['memory']}" for entry in memories_list)
 
-        # [3] 통합 시스템 프롬프트 구성
-        if req.system_prompt:
-            base_prompt = req.system_prompt
-        else:
-            base_prompt = settings.system_prompt_template
-
-        if explicit_str:
-            base_prompt = base_prompt.replace(
-                "{memories}",
-                f"[항상 기억하는 것들]\n{explicit_str}\n\n[대화 맥락 관련 기억]\n{dynamic_str}"
-            )
-        else:
-            base_prompt = base_prompt.replace("{memories}", dynamic_str)
+        # [3] 시스템 프롬프트 구성 — 플레이스홀더 각각 독립 치환
+        base_prompt = req.system_prompt if req.system_prompt else settings.system_prompt_template
+        base_prompt = base_prompt.replace("{explicit_memories}", explicit_str)
+        base_prompt = base_prompt.replace("{memories}", dynamic_str)
 
         # [2] Session Metadata를 system prompt 앞에 주입
         session_metadata = build_session_metadata()
