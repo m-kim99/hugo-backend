@@ -9,3 +9,5 @@ __pycache__/
 *.log
 .pytest_cache/
 .railway/
+conversations/
+import_gpt_conversations.py

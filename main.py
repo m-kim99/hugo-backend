@@ -252,6 +252,16 @@ async def delete_explicit_memory(memory_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/search")
+async def search_messages(q: str, user_id: str = settings.default_user_id, limit: int = 20):
+    try:
+        if not q.strip():
+            return {"results": []}
+        results = SessionService.search_messages(user_id, q.strip(), limit)
+        return {"results": results}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=settings.port)

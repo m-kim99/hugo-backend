@@ -1,20 +1,10 @@
+from datetime import datetime
 from typing import List, Optional, Dict
 from config import supabase
-
-# 슬라이딩 윈도우 설정
-# gpt-4o-mini 128k 한도에서 시스템프롬프트/메모리/현재메시지 여유분 제외
-MAX_HISTORY_TOKENS = 100_000
-
-def estimate_tokens(text: str) -> int:
-    """토큰 수 추정. 한글은 글자당 ~2토큰, 영어는 단어당 ~1.3토큰.
-    정확도보다 안전한 과추정 방식 사용 (글자당 2토큰 고정).
-    """
-    return len(text) * 2
 
 class SessionService:
     @staticmethod
     def create_session(user_id: str, first_message: str) -> Dict:
-        """새 세션 생성"""
         title = first_message[:50] + "..." if len(first_message) > 50 else first_message
         result = supabase.table('chat_sessions').insert({
             'user_id': user_id,
@@ -25,7 +15,6 @@ class SessionService:
 
     @staticmethod
     def get_sessions(user_id: str, limit: int = 50) -> List[Dict]:
-        """사용자의 세션 목록 조회"""
         result = supabase.table('chat_sessions')\
             .select('*')\
             .eq('user_id', user_id)\
@@ -36,7 +25,6 @@ class SessionService:
 
     @staticmethod
     def get_session(session_id: str) -> Optional[Dict]:
-        """특정 세션 조회"""
         result = supabase.table('chat_sessions')\
             .select('*')\
             .eq('id', session_id)\
@@ -46,7 +34,6 @@ class SessionService:
 
     @staticmethod
     def delete_session(session_id: str) -> bool:
-        """세션 삭제 (메시지도 CASCADE로 삭제됨)"""
         supabase.table('chat_sessions')\
             .delete()\
             .eq('id', session_id)\
@@ -55,7 +42,6 @@ class SessionService:
 
     @staticmethod
     def add_message(session_id: str, role: str, content: str) -> Dict:
-        """메시지 추가"""
         result = supabase.table('chat_messages').insert({
             'session_id': session_id,
             'role': role,
@@ -66,7 +52,6 @@ class SessionService:
 
     @staticmethod
     def get_messages(session_id: str) -> List[Dict]:
-        """세션의 전체 메시지 목록 조회 (프론트 렌더링용, limit 없음)"""
         result = supabase.table('chat_messages')\
             .select('*')\
             .eq('session_id', session_id)\
@@ -75,32 +60,70 @@ class SessionService:
         return result.data
 
     @staticmethod
-    def get_recent_messages(session_id: str) -> List[Dict]:
-        """OpenAI 컨텍스트 조립용 슬라이딩 윈도우 메시지 조회.
+    def get_recent_messages(session_id: str, limit: int = 20) -> List[Dict]:
+        """OpenAI 컨텍스트 조립용 최근 메시지 조회.
 
-        - 반드시 add_message(user) 호출 전에 실행 (현재 메시지 중복 방지)
-        - 전체 메시지를 최신순으로 가져온 뒤 오래된 것부터 토큰 초과분 제거
-        - MAX_HISTORY_TOKENS(100k) 안에서 최대한 많은 히스토리 유지
-        - 리턴: [{"role": "user"|"assistant", "content": "..."}] 시간순
+        반드시 현재 유저 메시지를 add_message()로 저장하기 전에 호출해야
+        현재 메시지가 히스토리에 중복 포함되는 것을 방지할 수 있음.
         """
-        # 전체 메시지 최신순으로 가져오기 (DB limit 없음)
         result = supabase.table('chat_messages')\
             .select('role, content')\
             .eq('session_id', session_id)\
             .order('created_at', desc=True)\
+            .limit(limit)\
+            .execute()
+        return list(reversed(result.data))
+
+    @staticmethod
+    def search_messages(user_id: str, query: str, limit: int = 20) -> List[Dict]:
+        """키워드로 메시지 전문 검색.
+
+        chat_messages.content ILIKE '%query%' 로 검색 후
+        session title, message_id, snippet 반환.
+        user_id 필터는 Python 레벨에서 수행 (PostgREST 조인 필터 호환성).
+        """
+        if not query.strip():
+            return []
+
+        result = supabase.table('chat_messages')\
+            .select('id, content, role, session_id, chat_sessions!inner(title, updated_at, user_id)')\
+            .ilike('content', f'%{query}%')\
+            .order('created_at', desc=True)\
+            .limit(limit * 3)\
             .execute()
 
-        all_messages = result.data  # 최신순 정렬 상태
+        # user_id 필터 + 중복 session 제거 (session당 첫 번째 매칭 메시지만)
+        seen_sessions = set()
+        results = []
+        for row in result.data:
+            session_info = row.get('chat_sessions') or {}
+            if session_info.get('user_id') != user_id:
+                continue
+            session_id = row['session_id']
+            if session_id in seen_sessions:
+                continue
+            seen_sessions.add(session_id)
 
-        # 최신 메시지부터 역순으로 토큰 누적, 한도 초과 시 중단 (슬라이딩 윈도우)
-        selected = []
-        total_tokens = 0
-        for msg in all_messages:
-            msg_tokens = estimate_tokens(msg['content'])
-            if total_tokens + msg_tokens > MAX_HISTORY_TOKENS:
-                break  # 오래된 것부터 자연스럽게 밀려남
-            selected.append(msg)
-            total_tokens += msg_tokens
+            # 키워드 주변 스니펫 생성
+            content = row['content']
+            idx = content.lower().find(query.lower())
+            if idx == -1:
+                snippet = content[:100]
+            else:
+                start = max(0, idx - 40)
+                end = min(len(content), idx + len(query) + 40)
+                snippet = ('...' if start > 0 else '') + content[start:end] + ('...' if end < len(content) else '')
 
-        # 시간순(오래된 것부터)으로 뒤집어서 반환
-        return list(reversed(selected))
+            results.append({
+                'message_id': row['id'],
+                'session_id': session_id,
+                'session_title': session_info.get('title', '제목 없음'),
+                'session_updated_at': session_info.get('updated_at', ''),
+                'role': row['role'],
+                'snippet': snippet,
+            })
+
+            if len(results) >= limit:
+                break
+
+        return results
