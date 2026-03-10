@@ -182,7 +182,8 @@ async def delete_session(session_id: str):
 @app.get("/memories")
 async def get_all_memories(user_id: str = settings.default_user_id):
     try:
-        return {"memories": memory.get_all(user_id=user_id)}
+        result = memory.get_all(user_id=user_id)
+        return {"memories": result.get("results", [])}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
