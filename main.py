@@ -143,9 +143,9 @@ async def create_session(user_id: str = settings.default_user_id, title: str = "
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/sessions")
-async def get_sessions(user_id: str = settings.default_user_id, limit: int = 50):
+async def get_sessions(user_id: str = settings.default_user_id, limit: int = 50, offset: int = 0):
     try:
-        sessions = SessionService.get_sessions(user_id, limit)
+        sessions = SessionService.get_sessions(user_id, limit, offset)
         return {"sessions": sessions}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

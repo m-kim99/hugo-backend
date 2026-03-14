@@ -14,12 +14,12 @@ class SessionService:
         return result.data[0] if result.data else None
 
     @staticmethod
-    def get_sessions(user_id: str, limit: int = 50) -> List[Dict]:
+    def get_sessions(user_id: str, limit: int = 50, offset: int = 0) -> List[Dict]:
         result = supabase.table('chat_sessions')\
             .select('*')\
             .eq('user_id', user_id)\
             .order('updated_at', desc=True)\
-            .limit(limit)\
+            .range(offset, offset + limit - 1)\
             .execute()
         return result.data
 
