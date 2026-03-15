@@ -10,6 +10,12 @@ from config import settings
 from memory_service import memory
 from session_service import SessionService
 from explicit_memory_service import ExplicitMemoryService
+from topic_highlight_service import TopicHighlightService
+from response_preference_service import ResponsePreferenceService
+from user_insight_service import UserInsightService
+from user_knowledge_memory_service import UserKnowledgeMemoryService
+from recent_conversation_service import RecentConversationService
+from session_stats_service import SessionStatsService
 
 app = FastAPI(title=settings.api_title)
 
@@ -26,15 +32,20 @@ openai_client = OpenAI(api_key=settings.openai_api_key)
 KST = ZoneInfo("Asia/Seoul")
 WEEKDAYS_KO = ["월요일", "화요일", "수요일", "목요일", "금요일", "토요일", "일요일"]
 
-def build_session_metadata() -> str:
+def build_session_metadata(user_id: str) -> str:
     """[2] Session Metadata: 현재 KST 기준 날짜/시간/요일 생성."""
     now = datetime.now(KST)
     weekday = WEEKDAYS_KO[now.weekday()]
-    return (
+    base = (
         f"[현재 세션 정보]\n"
         f"- 날짜: {now.strftime('%Y년 %m월 %d일')} ({weekday})\n"
         f"- 시각: {now.strftime('%H시 %M분')}\n"
     )
+    stats = SessionStatsService.get_stats(user_id)
+    stats_str = SessionStatsService.format_for_metadata(stats)
+    if stats_str:
+        return base + "\n" + stats_str
+    return base
 
 def add_memory_background(messages: List[Dict], user_id: str, session_id: str):
     """백그라운드에서 Mem0 팩트 추출 — 응답 속도에 영향 없음."""
@@ -89,13 +100,40 @@ async def chat(req: ChatRequest, background_tasks: BackgroundTasks):
         memories_list = relevant_memories.get("results", [])
         dynamic_str = "\n".join(f"- {entry['memory']}" for entry in memories_list)
 
+        # [5] 계층 5: 응답 선호도
+        resp_prefs = ResponsePreferenceService.get_preferences(req.user_id)
+        prefs_str = ResponsePreferenceService.format_for_prompt(resp_prefs)
+
+        # [6] 계층 6: 주제 하이라이트
+        topic_highlights = TopicHighlightService.get_highlights(req.user_id)
+        topic_str = TopicHighlightService.format_for_prompt(topic_highlights)
+
+        # [7] 계층 7: 사용자 인사이트
+        user_insights = UserInsightService.get_insights(req.user_id)
+        insights_str = UserInsightService.format_for_prompt(user_insights)
+
+        # [8] 계층 8: 유저 지식 메모리
+        knowledge_memories = UserKnowledgeMemoryService.get_memories(req.user_id)
+        knowledge_str = UserKnowledgeMemoryService.format_for_prompt(knowledge_memories)
+
+        # [9] 계층 9: 크로스 세션 최근 대화
+        recent_cross = RecentConversationService.get_recent_cross_session(
+            req.user_id, session_id, session_limit=40
+        )
+        cross_session_str = RecentConversationService.format_for_prompt(recent_cross)
+
         # [3] 시스템 프롬프트 구성 — 플레이스홀더 각각 독립 치환
         base_prompt = req.system_prompt if req.system_prompt else settings.system_prompt_template
         base_prompt = base_prompt.replace("{explicit_memories}", explicit_str)
         base_prompt = base_prompt.replace("{memories}", dynamic_str)
+        base_prompt = base_prompt.replace("{response_preferences}", prefs_str)
+        base_prompt = base_prompt.replace("{topic_highlights}", topic_str)
+        base_prompt = base_prompt.replace("{user_insights}", insights_str)
+        base_prompt = base_prompt.replace("{user_knowledge_memories}", knowledge_str)
+        base_prompt = base_prompt.replace("{recent_conversations}", cross_session_str)
 
         # [2] Session Metadata를 system prompt 앞에 주입
-        session_metadata = build_session_metadata()
+        session_metadata = build_session_metadata(req.user_id)
         system_prompt = session_metadata + "\n" + base_prompt
 
         # ── DEBUG START ──────────────────────────────────────
