@@ -98,6 +98,17 @@ async def chat(req: ChatRequest, background_tasks: BackgroundTasks):
         session_metadata = build_session_metadata()
         system_prompt = session_metadata + "\n" + base_prompt
 
+        # ── DEBUG START ──────────────────────────────────────
+        print(f"\n{'='*60}")
+        print(f"[DEBUG] session_id: {session_id}")
+        print(f"[DEBUG] system_prompt ({len(system_prompt)}자):\n{system_prompt}")
+        print(f"[DEBUG] history ({len(history)}개 메시지):")
+        for i, h in enumerate(history):
+            preview = h['content'][:100].replace('\n', ' ')
+            print(f"  [{i+1}] {h['role']}: {preview}...")
+        print(f"{'='*60}\n")
+        # ── DEBUG END ────────────────────────────────────────
+
         # OpenAI messages 조립: 시스템 + [5]히스토리 + 현재 메시지
         messages = [{"role": "system", "content": system_prompt}]
         messages.extend(history)
